@@ -1,0 +1,20 @@
+[project]
+name = "folder-agent"
+version = "0.1.0"
+description = "Autonomous code and file operations using mini-swe-agent with Azure OpenAI"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "mini-swe-agent>=2.2.7",
+]
+
+[project.scripts]
+folder-agent = "folder_agent:main"
+fa = "folder_agent:main"
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["folder_agent"]

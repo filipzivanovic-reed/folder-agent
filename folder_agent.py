@@ -408,8 +408,8 @@ Environment variables:
     
     parser.add_argument(
         "--folder", "-f",
-        required=True,
-        help="Path to the target folder to work on"
+        default=".",
+        help="Path to the target folder to work on (default: current directory)"
     )
     
     parser.add_argument(
