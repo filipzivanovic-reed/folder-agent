@@ -136,11 +136,13 @@ class FolderAgent:
     def build(self):
         """Build the mini-swe-agent with configured settings."""
         # Build model
-        model = get_model({
-            "model_name": self.azure_cfg["model_name"],
-            "cost_tracking": self.azure_cfg["cost_tracking"],
-            "model_kwargs": self.azure_cfg["model_kwargs"],
-        })
+        model = get_model(
+            input_model_name=self.azure_cfg["model_name"],
+            config={
+                "cost_tracking": self.azure_cfg["cost_tracking"],
+                "model_kwargs": self.azure_cfg["model_kwargs"],
+            }
+        )
         
         # Build environment
         env = get_environment({
@@ -153,56 +155,238 @@ class FolderAgent:
             model,
             env,
             {
-                "mode": self.agent_cfg.get("mode", "yolo"),
                 "system_template": self.system_prompt,
                 "instance_template": self.instance_template,
             },
-            default_type="interactive",
+            default_type="default",
         )
         
         return agent
     
+    def _display_trajectory(self, trajectory_file: str) -> None:
+        """Parse and display trajectory in readable format."""
+        try:
+            with open(trajectory_file) as f:
+                data = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            return
+
+        print("\n" + "=" * 80)
+        print("🔍 AGENT EXECUTION TRACE")
+        print("=" * 80)
+
+        # Extract tool calls from messages
+        tool_calls = []
+        tool_results = {}
+        
+        for msg in data.get("messages", []):
+            if "tool_calls" in msg and msg["tool_calls"]:
+                for call in msg["tool_calls"]:
+                    func = call.get("function", {})
+                    args = func.get("arguments", "{}")
+                    try:
+                        args_dict = json.loads(args)
+                    except:
+                        args_dict = {"raw": args}
+                    tool_calls.append({
+                        "id": call.get("id"),
+                        "name": func.get("name"),
+                        "args": args_dict
+                    })
+            elif msg.get("role") == "tool" and "content" in msg:
+                tool_results[msg.get("tool_call_id")] = msg["content"]
+
+        if tool_calls:
+            print(f"\n📊 Commands Executed: {len(tool_calls)}")
+            print("-" * 80)
+
+            for i, call in enumerate(tool_calls, 1):
+                print(f"\n📍 Step {i}: {call['name']}")
+                
+                # Display command
+                if call["name"] == "bash":
+                    cmd = call["args"].get("command", "")
+                    print(f"   Command: {cmd}")
+                
+                # Display result if available
+                result = tool_results.get(call["id"])
+                if result:
+                    print(f"   Output:")
+                    for line in result.split("\n")[:15]:
+                        if line.strip():
+                            print(f"      {line}")
+                    if len(result.split("\n")) > 15:
+                        print(f"      ... ({len(result.split(chr(10))) - 15} more lines)")
+        
+        # Display final submission
+        if "info" in data and "submission" in data["info"]:
+            print(f"\n\n{'=' * 80}")
+            print("📝 FINAL SUBMISSION")
+            print("=" * 80)
+            submission = data["info"]["submission"]
+            print(submission)
+
     def run(self, task: str, output_file: Optional[str] = None) -> dict:
         """
         Run the agent on the given task.
         
         Args:
             task: The instruction/task for the agent
-            output_file: Optional path to save the full run trajectory
+            output_file: Optional path to save the full run trajectory (defaults to trajectory.json)
             
         Returns:
             dict with keys: submission, exit_status, full_run_file
         """
         print(f"🚀 Starting folder agent on: {self.folder_path}")
         print(f"📋 Task: {task[:100]}{'...' if len(task) > 100 else ''}")
-        print("-" * 50)
+        print("-" * 50 + "\n")
+        sys.stdout.flush()
         
         agent = self.build()
         
         try:
+            # Track all messages to detect new ones
+            last_msg_count = 0
+            step_num = 0
+            
+            original_step = agent.step
+            
+            def step_wrapper():
+                nonlocal last_msg_count, step_num
+                original_step()
+                
+                # Check for new messages
+                current_msg_count = len(agent.messages)
+                if current_msg_count > last_msg_count:
+                    # Look at messages added since last check
+                    for msg in agent.messages[last_msg_count:]:
+                        # Show tool calls (commands)
+                        if "tool_calls" in msg and msg["tool_calls"]:
+                            for call in msg["tool_calls"]:
+                                step_num += 1
+                                func = call.get("function", {})
+                                args = func.get("arguments", "{}")
+                                try:
+                                    args_dict = json.loads(args)
+                                except:
+                                    args_dict = {}
+                                
+                                cmd = args_dict.get("command", "")
+                                if cmd:
+                                    print(f"⚡ Step {step_num}: {cmd[:80]}")
+                                    sys.stdout.flush()
+                        
+                        # Show tool results
+                        elif msg.get("role") == "tool":
+                            content = msg.get("content", "")
+                            if content and "<output>" in content:
+                                output = content.split("<output>")[1].split("</output>")[0].strip()
+                                lines = output.split("\n")
+                                # Show first line or summary
+                                if lines:
+                                    first_line = lines[0][:70]
+                                    if len(lines) > 1:
+                                        print(f"   ↳ {first_line} ... ({len(lines)} total lines)")
+                                    else:
+                                        print(f"   ↳ {first_line}")
+                                    sys.stdout.flush()
+                    
+                    last_msg_count = current_msg_count
+            
+            agent.step = step_wrapper
+            
+            # Run the agent
             result = agent.run(task)
             
-            # Save full trajectory if requested
-            if output_file:
-                full = agent.serialize()
-                output_path = Path(output_file)
-                output_path.write_text(json.dumps(full, indent=2))
-                print(f"💾 Full trajectory saved to: {output_file}")
+            # Save trajectory
+            traj_file = output_file or "trajectory.json"
+            full = agent.serialize()
+            output_path = Path(traj_file)
+            output_path.write_text(json.dumps(full, indent=2))
+            
+            print(f"\n✓ Execution complete\n")
+            sys.stdout.flush()
+            
+            # Display clean summary
+            self._display_clean_summary(full)
             
             return {
                 "submission": result.get("submission"),
                 "exit_status": result.get("exit_status"),
-                "full_run_file": output_file,
-                "ok": result.get("exit_status") == "submitted",
+                "full_run_file": traj_file,
+                "ok": result.get("exit_status", "").lower() == "submitted",
             }
         except Exception as e:
             print(f"❌ Error running agent: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 "submission": None,
                 "exit_status": "error",
                 "error": str(e),
                 "ok": False,
             }
+    
+    def _display_clean_summary(self, trajectory_data: dict) -> None:
+        """Display a clean, simplified summary of agent execution."""
+        print("=" * 80)
+        print("📝 EXECUTION SUMMARY")
+        print("=" * 80)
+        
+        # Extract commands and results
+        commands = []
+        for msg in trajectory_data.get("messages", []):
+            if "tool_calls" in msg and msg["tool_calls"]:
+                for call in msg["tool_calls"]:
+                    func = call.get("function", {})
+                    args = func.get("arguments", "{}")
+                    try:
+                        args_dict = json.loads(args)
+                    except:
+                        args_dict = {}
+                    
+                    commands.append({
+                        "id": call.get("id"),
+                        "command": args_dict.get("command", ""),
+                    })
+        
+        # Collect results
+        results = {}
+        for msg in trajectory_data.get("messages", []):
+            if msg.get("role") == "tool" and "content" in msg:
+                call_id = msg.get("tool_call_id")
+                results[call_id] = msg["content"]
+        
+        # Display commands with results
+        if commands:
+            print(f"\nCommands executed: {len(commands)}\n")
+            for i, cmd in enumerate(commands, 1):
+                print(f"{i}. $ {cmd['command']}")
+                result = results.get(cmd["id"], "")
+                if result:
+                    # Parse XML-like result format
+                    if "<output>" in result:
+                        output = result.split("<output>")[1].split("</output>")[0].strip()
+                    else:
+                        output = result.strip()
+                    
+                    if output:
+                        # Show first 3 lines of output
+                        lines = output.split("\n")
+                        for line in lines[:3]:
+                            if line.strip():
+                                print(f"   {line}")
+                        if len(lines) > 3:
+                            print(f"   ... ({len(lines) - 3} more lines)")
+                print()
+        
+        # Show final result
+        info = trajectory_data.get("info", {})
+        if "submission" in info:
+            print("=" * 80)
+            print("✅ RESULT")
+            print("=" * 80)
+            print(info["submission"])
 
 
 def main():
