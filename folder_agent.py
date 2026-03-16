@@ -58,9 +58,19 @@ Important execution rules:
 def load_config(config_path: str) -> dict:
     """Load and parse the YAML config file with environment variable substitution."""
     config_file = Path(config_path)
+    
+    # If config doesn't exist, try to find it in the folder-agent installation directory
     if not config_file.exists():
-        print(f"Warning: Config file {config_path} not found, using defaults")
-        return {}
+        # Try to find folder_agent module location
+        import folder_agent as fa_module
+        fa_dir = Path(fa_module.__file__).parent
+        fallback_config = fa_dir / "config.yaml"
+        
+        if fallback_config.exists():
+            config_file = fallback_config
+        else:
+            print(f"Warning: Config file not found (looked in {config_path} and {fallback_config}), using defaults")
+            return {}
     
     # Read the config and substitute env vars
     content = config_file.read_text()
