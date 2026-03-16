@@ -1,0 +1,28 @@
+# Azure OpenAI Configuration
+# Fill in your Azure details here or set environment variables
+
+# Azure OpenAI credentials
+azure_api_key: "${AZURE_API_KEY}"
+azure_api_base: "${AZURE_API_BASE}"
+azure_api_version: "2024-10-21"
+
+# Your Azure deployment name (e.g., gpt-4o, gpt-4o-mini, etc.)
+azure_deployment: "gpt-4o"
+
+# Model settings
+model:
+  # Use azure/<deployment-name> format for LiteLLM
+  model_name: "azure/gpt-4o"
+  cost_tracking: "ignore_errors"
+  model_kwargs:
+    temperature: 0
+    # api_base, api_version, api_key are passed from top-level config
+
+# Agent behavior
+agent:
+  mode: "yolo"  # yolo = fully automated, interactive = step-by-step confirmation
+
+# Environment settings
+environment:
+  timeout: 120  # seconds per step
+  # cwd will be set dynamically when running

@@ -1,0 +1,17 @@
+#!/bin/bash
+#
+# folder-agent - Quick CLI wrapper for the folder agent
+#
+# Usage:
+#   folder-agent --folder /path/to/folder --task "your instructions"
+#   folder-agent -f ./project -t "Fix the bug in main.py"
+#
+# Environment (can also be set in config.yaml):
+#   AZURE_API_KEY      Your Azure OpenAI API key
+#   AZURE_API_BASE     Your Azure endpoint
+#
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Run the Python script with all passed arguments
+exec python3 "$SCRIPT_DIR/folder_agent.py" "$@"
